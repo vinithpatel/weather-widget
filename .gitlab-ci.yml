@@ -1,0 +1,72 @@
+# GitLab CI/CD configuration
+# please read Gitlab-CI-Setup.md to enable CI/CD on the repository
+# https://itgit.dsone.3ds.com/widget-lab/documentation/blob/master/build_Gitlab-CI-Setup.md
+
+# default image: dswidgetlab/node:latest
+image: dswidgetlab/node
+
+stages:
+    - build
+    - test
+    - deploy
+
+cache:
+    # setup a cache for each branch
+    key: "$CI_COMMIT_REF_SLUG"
+    paths:
+        - node_modules/
+
+##########################
+# Check the widget indeed builds on CI
+
+npm_build:
+    stage: build
+    tags:
+        - widgetlab
+    artifacts:
+        expire_in: 10min
+        paths:
+            - dist/
+    script:
+        - npm install
+        - npm run build
+
+##########################
+# Check the widget builds with dependencies' latest versions
+# patch package.json, install, build
+# (since versions are not reusable : do not use cache)
+
+npm_test_latest_deps:
+    stage: test
+    tags:
+        - widgetlab
+    only:
+        - master
+        - /.*-ci$/
+    cache: {}
+    artifacts:
+        when: on_failure
+        paths:
+            - package*.json
+    allow_failure: true
+    script:
+        - ncu --configFilePath ./test
+        - npm install
+        - npm run build
+        - npm test
+
+##########################
+# On MASTER branch only, publish the widget to AWS S3 BTCC Bucket
+
+publish_widget_to_S3:
+    stage: deploy
+    image: dswidgetlab/awscli
+    tags:
+        - widgetlab
+    only:
+        - master
+    allow_failure: true
+    script:
+        - export S3_DST=s3://btcc/widget-lab/$CI_PROJECT_NAME/
+        - aws s3 sync ./dist/ $S3_DST --acl public-read --delete
+        - echo "***** $GITLAB_USER_NAME pushed $CI_PROJECT_NAME (commit $CI_COMMIT_SHORT_SHA) to $S3_DST *****"
